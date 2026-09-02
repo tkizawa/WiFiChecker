@@ -13,4 +13,11 @@
   <ItemGroup>
     <Resource Include="Resources\app.ico" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Setup\**" />
+    <Page Remove="Setup\**" />
+    <Resource Remove="Setup\**" />
+    <None Remove="Setup\**" />
+  </ItemGroup>
 </Project>
