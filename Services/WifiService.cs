@@ -44,7 +44,7 @@ namespace WiFiChecker.Services
             return info;
         }
 
-        private void ParseNetshWlanInterfaces(WifiInfo info)
+        private void ParseNetshWlanInterfaces(WifiInfo targetInfo)
         {
             try
             {
@@ -67,6 +67,9 @@ namespace WiFiChecker.Services
 
                 if (string.IsNullOrWhiteSpace(output)) return;
 
+                var interfaceList = new System.Collections.Generic.List<WifiInfo>();
+                WifiInfo? current = null;
+
                 // 各行をパース
                 var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 foreach (var rawLine in lines)
@@ -78,29 +81,53 @@ namespace WiFiChecker.Services
                     string key = line.Substring(0, colonIdx).Trim();
                     string val = line.Substring(colonIdx + 1).Trim();
 
+                    // 新しいインターフェイスの開始判定（名前 / Name）
+                    if (key.Equals("名前", StringComparison.OrdinalIgnoreCase) || key.Equals("Name", StringComparison.OrdinalIgnoreCase))
+                    {
+                        current = new WifiInfo
+                        {
+                            LastRefreshed = targetInfo.LastRefreshed,
+                            InterfaceName = val
+                        };
+                        interfaceList.Add(current);
+                        continue;
+                    }
+
+                    if (current == null)
+                    {
+                        current = new WifiInfo
+                        {
+                            LastRefreshed = targetInfo.LastRefreshed
+                        };
+                        interfaceList.Add(current);
+                    }
+
                     // キーの正規化
                     if (key.Equals("状態", StringComparison.OrdinalIgnoreCase) || key.Equals("State", StringComparison.OrdinalIgnoreCase))
                     {
-                        info.IsConnected = val.Contains("接続", StringComparison.OrdinalIgnoreCase) ||
-                                           val.Contains("connected", StringComparison.OrdinalIgnoreCase);
+                        // 「接続されました」「connected」等で、かつ「切断」「disconnected」を含まない
+                        bool isConn = (val.Contains("接続", StringComparison.OrdinalIgnoreCase) || val.Contains("connected", StringComparison.OrdinalIgnoreCase))
+                                      && !val.Contains("切断", StringComparison.OrdinalIgnoreCase)
+                                      && !val.Contains("disconnected", StringComparison.OrdinalIgnoreCase);
+                        current.IsConnected = isConn;
                     }
                     else if (key.Equals("SSID", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (!string.IsNullOrEmpty(val)) info.Ssid = val;
+                        if (!string.IsNullOrEmpty(val)) current.Ssid = val;
                     }
                     else if (key.Contains("BSSID", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (!string.IsNullOrEmpty(val)) info.Bssid = val.ToUpperInvariant();
+                        if (!string.IsNullOrEmpty(val)) current.Bssid = val.ToUpperInvariant();
                     }
                     else if (key.Equals("シグナル", StringComparison.OrdinalIgnoreCase) || key.Equals("Signal", StringComparison.OrdinalIgnoreCase))
                     {
                         var matchSig = Regex.Match(val, @"\d+");
                         if (matchSig.Success && int.TryParse(matchSig.Value, out int qual))
                         {
-                            info.SignalQuality = qual;
-                            if (info.SignalDbm == -100)
+                            current.SignalQuality = qual;
+                            if (current.SignalDbm == -100)
                             {
-                                info.SignalDbm = (qual / 2) - 100;
+                                current.SignalDbm = (qual / 2) - 100;
                             }
                         }
                     }
@@ -108,54 +135,64 @@ namespace WiFiChecker.Services
                     {
                         if (int.TryParse(val, out int rssi))
                         {
-                            info.SignalDbm = rssi;
+                            current.SignalDbm = rssi;
                         }
                     }
-                    else if (key.Contains("無線", StringComparison.OrdinalIgnoreCase) || key.Contains("Radio", StringComparison.OrdinalIgnoreCase))
+                    else if ((key.Contains("無線", StringComparison.OrdinalIgnoreCase) && key.Contains("種類", StringComparison.OrdinalIgnoreCase)) ||
+                             key.Equals("Radio type", StringComparison.OrdinalIgnoreCase) ||
+                             key.Contains("802.11", StringComparison.OrdinalIgnoreCase))
                     {
-                        info.PhyType = ConvertRadioTypeToStandardName(val);
+                        // 「無線の状態」ではなく「無線の種類」のみを規格として取得
+                        current.PhyType = ConvertRadioTypeToStandardName(val);
                     }
                     else if (key.Equals("認証", StringComparison.OrdinalIgnoreCase) || key.Equals("Authentication", StringComparison.OrdinalIgnoreCase))
                     {
-                        info.Authentication = val;
+                        current.Authentication = val;
                     }
                     else if (key.Equals("暗号", StringComparison.OrdinalIgnoreCase) || key.Equals("Cipher", StringComparison.OrdinalIgnoreCase))
                     {
-                        info.Cipher = val;
+                        current.Cipher = val;
                     }
                     else if (key.Contains("チャネル", StringComparison.OrdinalIgnoreCase) || key.Contains("Channel", StringComparison.OrdinalIgnoreCase))
                     {
                         var matchCh = Regex.Match(val, @"\d+");
                         if (matchCh.Success && int.TryParse(matchCh.Value, out int ch))
                         {
-                            info.Channel = ch;
-                            DetermineBandAndFrequency(info, ch);
+                            current.Channel = ch;
+                            DetermineBandAndFrequency(current, ch);
                         }
                     }
                     else if (key.Contains("バンド", StringComparison.OrdinalIgnoreCase) || key.Contains("Band", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (!string.IsNullOrEmpty(val)) info.Band = val;
+                        if (!string.IsNullOrEmpty(val)) current.Band = val;
                     }
-                    else if (key.Contains("受信速度", StringComparison.OrdinalIgnoreCase) || key.Contains("Receive rate", StringComparison.OrdinalIgnoreCase))
+                    else if (key.Contains("受信", StringComparison.OrdinalIgnoreCase) || key.Contains("Receive", StringComparison.OrdinalIgnoreCase))
                     {
                         var match = Regex.Match(val, @"[\d\.]+");
                         if (match.Success && double.TryParse(match.Value, out double rx))
                         {
-                            info.LinkSpeedRxMbps = (long)Math.Round(rx);
+                            current.LinkSpeedRxMbps = (long)Math.Round(rx);
                         }
                     }
-                    else if (key.Contains("送信速度", StringComparison.OrdinalIgnoreCase) || key.Contains("Transmit rate", StringComparison.OrdinalIgnoreCase))
+                    else if (key.Contains("送信", StringComparison.OrdinalIgnoreCase) || key.Contains("Transmit", StringComparison.OrdinalIgnoreCase))
                     {
                         var match = Regex.Match(val, @"[\d\.]+");
                         if (match.Success && double.TryParse(match.Value, out double tx))
                         {
-                            info.LinkSpeedTxMbps = (long)Math.Round(tx);
+                            current.LinkSpeedTxMbps = (long)Math.Round(tx);
                         }
                     }
-                    else if (key.Equals("名前", StringComparison.OrdinalIgnoreCase) || key.Equals("Name", StringComparison.OrdinalIgnoreCase))
+                    else if (key.Equals("物理アドレス", StringComparison.OrdinalIgnoreCase) || key.Equals("Physical address", StringComparison.OrdinalIgnoreCase))
                     {
-                        info.InterfaceName = val;
+                        current.MacAddress = val.ToUpperInvariant();
                     }
+                }
+
+                // 接続されているインターフェイスを優先して選択（なければ先頭）
+                var best = interfaceList.FirstOrDefault(i => i.IsConnected) ?? interfaceList.FirstOrDefault();
+                if (best != null)
+                {
+                    CopyProperties(best, targetInfo);
                 }
             }
             catch (Exception ex)
@@ -164,16 +201,36 @@ namespace WiFiChecker.Services
             }
         }
 
+        private void CopyProperties(WifiInfo source, WifiInfo target)
+        {
+            target.IsConnected = source.IsConnected;
+            target.Ssid = source.Ssid;
+            target.Bssid = source.Bssid;
+            target.SignalQuality = source.SignalQuality;
+            target.SignalDbm = source.SignalDbm;
+            target.FrequencyGhz = source.FrequencyGhz;
+            target.Channel = source.Channel;
+            target.Band = source.Band;
+            target.PhyType = source.PhyType;
+            target.Authentication = source.Authentication;
+            target.Cipher = source.Cipher;
+            target.LinkSpeedRxMbps = source.LinkSpeedRxMbps;
+            target.LinkSpeedTxMbps = source.LinkSpeedTxMbps;
+            target.InterfaceName = source.InterfaceName;
+            target.MacAddress = source.MacAddress;
+            target.NetworkCategory = source.NetworkCategory;
+        }
+
         private string ConvertRadioTypeToStandardName(string radioType)
         {
             if (string.IsNullOrEmpty(radioType)) return "Unknown";
 
-            if (radioType.Contains("802.11be")) return $"{radioType} (Wi-Fi 7)";
-            if (radioType.Contains("802.11ax")) return $"{radioType} (Wi-Fi 6 / 6E)";
-            if (radioType.Contains("802.11ac")) return $"{radioType} (Wi-Fi 5)";
-            if (radioType.Contains("802.11n")) return $"{radioType} (Wi-Fi 4)";
-            if (radioType.Contains("802.11g")) return $"{radioType} (Wi-Fi 3)";
-            if (radioType.Contains("802.11a") || radioType.Contains("802.11b")) return radioType;
+            if (radioType.Contains("802.11be", StringComparison.OrdinalIgnoreCase)) return $"{radioType} (Wi-Fi 7)";
+            if (radioType.Contains("802.11ax", StringComparison.OrdinalIgnoreCase)) return $"{radioType} (Wi-Fi 6 / 6E)";
+            if (radioType.Contains("802.11ac", StringComparison.OrdinalIgnoreCase)) return $"{radioType} (Wi-Fi 5)";
+            if (radioType.Contains("802.11n", StringComparison.OrdinalIgnoreCase)) return $"{radioType} (Wi-Fi 4)";
+            if (radioType.Contains("802.11g", StringComparison.OrdinalIgnoreCase)) return $"{radioType} (Wi-Fi 3)";
+            if (radioType.Contains("802.11a", StringComparison.OrdinalIgnoreCase) || radioType.Contains("802.11b", StringComparison.OrdinalIgnoreCase)) return radioType;
 
             return radioType;
         }
@@ -209,22 +266,36 @@ namespace WiFiChecker.Services
         {
             try
             {
-                var interfaces = NetworkInterface.GetAllNetworkInterfaces()
-                    .Where(nic => nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 &&
-                                  nic.OperationalStatus == OperationalStatus.Up)
-                    .ToList();
+                var interfaces = NetworkInterface.GetAllNetworkInterfaces();
 
-                if (!interfaces.Any())
+                // 1. MACアドレスでの一致を試みる
+                NetworkInterface? targetNic = null;
+                if (!string.IsNullOrEmpty(info.MacAddress) && info.MacAddress != "00:00:00:00:00:00")
                 {
-                    interfaces = NetworkInterface.GetAllNetworkInterfaces()
-                        .Where(nic => nic.OperationalStatus == OperationalStatus.Up)
-                        .ToList();
+                    string macClean = info.MacAddress.Replace(":", "").Replace("-", "").ToUpperInvariant();
+                    targetNic = interfaces.FirstOrDefault(nic =>
+                        nic.GetPhysicalAddress().ToString().ToUpperInvariant() == macClean);
                 }
 
-                var targetNic = interfaces.FirstOrDefault(nic =>
-                    string.Equals(nic.Name, info.InterfaceName, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(nic.Description, info.InterfaceName, StringComparison.OrdinalIgnoreCase)
-                ) ?? interfaces.FirstOrDefault();
+                // 2. インターフェイス名での一致を試みる
+                if (targetNic == null && !string.IsNullOrEmpty(info.InterfaceName) && info.InterfaceName != "Unknown")
+                {
+                    targetNic = interfaces.FirstOrDefault(nic =>
+                        string.Equals(nic.Name, info.InterfaceName, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(nic.Description, info.InterfaceName, StringComparison.OrdinalIgnoreCase));
+                }
+
+                // 3. Wireless80211 で Up のものを試みる
+                if (targetNic == null)
+                {
+                    targetNic = interfaces.FirstOrDefault(nic =>
+                        nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 &&
+                        nic.OperationalStatus == OperationalStatus.Up);
+                }
+
+                // 4. フォールバック
+                targetNic ??= interfaces.FirstOrDefault(nic => nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
+                             ?? interfaces.FirstOrDefault(nic => nic.OperationalStatus == OperationalStatus.Up);
 
                 if (targetNic != null)
                 {
@@ -233,7 +304,10 @@ namespace WiFiChecker.Services
                         info.InterfaceName = targetNic.Name;
                     }
 
-                    info.MacAddress = string.Join(":", targetNic.GetPhysicalAddress().GetAddressBytes().Select(b => b.ToString("X2")));
+                    if (string.Equals(info.MacAddress, "00:00:00:00:00:00") || string.IsNullOrEmpty(info.MacAddress))
+                    {
+                        info.MacAddress = string.Join(":", targetNic.GetPhysicalAddress().GetAddressBytes().Select(b => b.ToString("X2")));
+                    }
 
                     var ipProps = targetNic.GetIPProperties();
 
