@@ -1,0 +1,14 @@
+<Application x:Class="WiFiChecker.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <SolidColorBrush x:Key="BackgroundBrush" Color="#F3F3F3" />
+        <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="CardBorderBrush" Color="#E0E0E0" />
+        <SolidColorBrush x:Key="PrimaryTextBrush" Color="#1A1A1A" />
+        <SolidColorBrush x:Key="SecondaryTextBrush" Color="#666666" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#0078D4" />
+        <SolidColorBrush x:Key="AccentBadgeBrush" Color="#107C41" />
+    </Application.Resources>
+</Application>

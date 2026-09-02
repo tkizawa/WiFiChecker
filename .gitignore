@@ -1,0 +1,10 @@
+# Build & Output
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# Rules: Git ignore Installer & MSIX folders
+/Installer/
+/MSIX/
