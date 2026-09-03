@@ -1,0 +1,8 @@
+{
+  "$comment": "Microsoft Store (パートナーセンター) のアプリ登録情報設定ファイル",
+  "PackageIdentityName": "57742TomokazuKizawa.WiFiChecker",
+  "PublisherId": "CN=963B8572-7B10-48CC-9F90-46F0022D6A68",
+  "PublisherDisplayName": "Tomokazu Kizawa",
+  "DisplayName": "Wi-Fi Checker",
+  "Description": "Wi-Fi接続状況、電波強度、リンク速度、周波数帯などをリアルタイムに確認できるツールです。"
+}
