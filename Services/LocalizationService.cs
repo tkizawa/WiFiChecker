@@ -85,6 +85,8 @@ namespace WiFiChecker.Services
         public string OptionLangEn => "English";
         public string LabelIntervalSetting => _isJapanese ? "自動更新間隔" : "Refresh Interval";
         public string UnitSeconds => _isJapanese ? "秒" : "sec";
+        public string LabelCsvLoggingSetting => _isJapanese ? "更新時にCSVログを記録する" : "Enable CSV logging on refresh";
+        public string BtnOpenLogFolder => _isJapanese ? "ログフォルダーを開く" : "Open Log Folder";
         public string BtnClose => _isJapanese ? "閉じる" : "Close";
 
         protected void OnPropertyChanged([CallerMemberName] string? propertyName = null)

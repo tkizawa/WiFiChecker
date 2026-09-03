@@ -20,6 +20,7 @@ namespace WiFiChecker.Models
         public int AutoRefreshIntervalSeconds { get; set; } = 5;
         public string Language { get; set; } = "auto"; // "auto", "ja-JP", "en-US"
         public string Theme { get; set; } = "Default";  // "Default", "Dark", "Light"
+        public bool EnableCsvLogging { get; set; } = true; // CSVロギングの有効化
 
         private static readonly string SettingsDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

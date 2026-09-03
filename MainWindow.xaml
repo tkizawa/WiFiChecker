@@ -252,16 +252,31 @@
 
         <!-- 設定モーダル Overlay -->
         <Grid x:Name="SettingsModal" Background="#80000000" Visibility="Collapsed">
-            <Border Background="#FFFFFF" CornerRadius="8" Width="360" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="24">
+            <Border Background="#FFFFFF" CornerRadius="8" Width="380" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="24">
                 <StackPanel>
                     <TextBlock x:Name="SettingsModalTitle" Text="設定" FontSize="18" FontWeight="Bold" Margin="0,0,0,16" />
                     
                     <TextBlock x:Name="LabelLanguageSettingText" Text="表示言語 (Language)" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
-                    <ComboBox x:Name="LangSettingCombo" SelectionChanged="OnLangSettingChanged" Margin="0,0,0,20">
+                    <ComboBox x:Name="LangSettingCombo" SelectionChanged="OnLangSettingChanged" Margin="0,0,0,16">
                         <ComboBoxItem Content="OSの設定に合わせる (Auto)" Tag="auto" />
                         <ComboBoxItem Content="日本語 (Japanese)" Tag="ja-JP" />
                         <ComboBoxItem Content="English" Tag="en-US" />
                     </ComboBox>
+
+                    <Separator Background="#E5E7EB" Margin="0,0,0,16" />
+
+                    <!-- CSVロギング設定 -->
+                    <TextBlock Text="CSV ロギング" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <CheckBox x:Name="EnableLoggingCheck" Click="OnEnableLoggingCheckChanged" Margin="0,0,0,10">
+                        <TextBlock x:Name="LabelCsvLoggingText" Text="更新時にCSVログを記録する" FontSize="13" VerticalAlignment="Center" />
+                    </CheckBox>
+
+                    <Button Click="OnOpenLogFolderClick" Padding="10,6" Margin="0,0,0,20" Background="#F3F4F6" BorderBrush="#D1D5DB" HorizontalAlignment="Left" Cursor="Hand">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="📁 " FontSize="12" VerticalAlignment="Center" />
+                            <TextBlock x:Name="BtnOpenLogFolderText" Text="ログフォルダーを開く" FontSize="12" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
 
                     <Button Click="OnCloseSettingsClick" Padding="16,8" Background="#0078D4" Foreground="#FFFFFF" BorderThickness="0" HorizontalAlignment="Right" FontWeight="SemiBold" Cursor="Hand">
                         <TextBlock x:Name="BtnCloseText" Text="閉じる" />
@@ -269,5 +284,6 @@
                 </StackPanel>
             </Border>
         </Grid>
+
     </Grid>
 </Window>

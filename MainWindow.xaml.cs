@@ -106,6 +106,9 @@ namespace WiFiChecker
             var info = await _wifiService.GetCurrentWifiInfoAsync();
             _currentInfo = info;
             UpdateUi(info);
+
+            // 更新時に各情報をCSV形式でロギング
+            await CsvLoggerService.LogWifiInfoAsync(info);
         }
 
         private void UpdateUi(WifiInfo info)
@@ -176,6 +179,8 @@ namespace WiFiChecker
 
             SettingsModalTitle.Text = Loc.SectionSettings;
             LabelLanguageSettingText.Text = Loc.LabelLanguageSetting;
+            LabelCsvLoggingText.Text = Loc.LabelCsvLoggingSetting;
+            BtnOpenLogFolderText.Text = Loc.BtnOpenLogFolder;
             BtnCloseText.Text = Loc.BtnClose;
 
             this.Title = Loc.AppTitle;
@@ -246,12 +251,25 @@ namespace WiFiChecker
                 }
             }
 
+            EnableLoggingCheck.IsChecked = App.Settings.EnableCsvLogging;
+
             SettingsModal.Visibility = Visibility.Visible;
         }
 
         private void OnCloseSettingsClick(object sender, RoutedEventArgs e)
         {
             SettingsModal.Visibility = Visibility.Collapsed;
+        }
+
+        private void OnEnableLoggingCheckChanged(object sender, RoutedEventArgs e)
+        {
+            App.Settings.EnableCsvLogging = EnableLoggingCheck.IsChecked == true;
+            App.Settings.Save();
+        }
+
+        private void OnOpenLogFolderClick(object sender, RoutedEventArgs e)
+        {
+            CsvLoggerService.OpenLogFolder();
         }
 
         private void OnLangSettingChanged(object sender, SelectionChangedEventArgs e)
@@ -270,3 +288,4 @@ namespace WiFiChecker
         }
     }
 }
+
