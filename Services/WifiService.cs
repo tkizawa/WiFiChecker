@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.NetworkInformation;
@@ -13,6 +15,8 @@ namespace WiFiChecker.Services
 {
     /// <summary>
     /// Wi-Fi接続・アクセスポイント情報取得サービス
+    /// Windows Native Wifi API (wlanapi.dll) を第一優先で使用し、
+    /// フォールバックとして netsh wlan show interfaces (文字コード自動判別) を利用
     /// </summary>
     public class WifiService
     {
@@ -30,10 +34,20 @@ namespace WiFiChecker.Services
 
             try
             {
-                // 1. netsh wlan show interfaces から詳細なWi-Fi情報を取得
-                ParseNetshWlanInterfaces(info);
+                // 1. Native Wifi API (wlanapi.dll) を最優先で試行
+                // 言語・コードページ・コマンド出力差異に左右されずミリ秒で完全取得可能
+                var nativeInfo = NativeWifiService.GetCurrentWifiInfo();
+                if (nativeInfo != null)
+                {
+                    CopyProperties(nativeInfo, info);
+                }
+                else
+                {
+                    // 2. フォールバック: netsh wlan show interfaces から取得
+                    ParseNetshWlanInterfaces(info);
+                }
 
-                // 2. System.Net.NetworkInformation から IP / Subnet / Gateway / DNS を紐付け
+                // 3. System.Net.NetworkInformation から IP / Subnet / Gateway / DNS / MAC を紐付け
                 EnrichNetworkStackInfo(info);
             }
             catch (Exception ex)
@@ -55,22 +69,26 @@ namespace WiFiChecker.Services
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.Default // OSの標準マルチバイトエンコーディング
+                    CreateNoWindow = true
                 };
 
                 using var process = Process.Start(startInfo);
                 if (process == null) return;
 
-                string output = process.StandardOutput.ReadToEnd();
+                // バイト列として標準出力を読み取り、適切なエンコーディングでデコード
+                using var memoryStream = new MemoryStream();
+                process.StandardOutput.BaseStream.CopyTo(memoryStream);
                 process.WaitForExit(3000);
 
+                byte[] rawBytes = memoryStream.ToArray();
+                if (rawBytes.Length == 0) return;
+
+                string output = DecodeProcessOutput(rawBytes);
                 if (string.IsNullOrWhiteSpace(output)) return;
 
-                var interfaceList = new System.Collections.Generic.List<WifiInfo>();
+                var interfaceList = new List<WifiInfo>();
                 WifiInfo? current = null;
 
-                // 各行をパース
                 var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 foreach (var rawLine in lines)
                 {
@@ -82,7 +100,8 @@ namespace WiFiChecker.Services
                     string val = line.Substring(colonIdx + 1).Trim();
 
                     // 新しいインターフェイスの開始判定（名前 / Name）
-                    if (key.Equals("名前", StringComparison.OrdinalIgnoreCase) || key.Equals("Name", StringComparison.OrdinalIgnoreCase))
+                    if (key.Equals("名前", StringComparison.OrdinalIgnoreCase) ||
+                        key.Equals("Name", StringComparison.OrdinalIgnoreCase))
                     {
                         current = new WifiInfo
                         {
@@ -102,24 +121,29 @@ namespace WiFiChecker.Services
                         interfaceList.Add(current);
                     }
 
-                    // キーの正規化
-                    if (key.Equals("状態", StringComparison.OrdinalIgnoreCase) || key.Equals("State", StringComparison.OrdinalIgnoreCase))
+                    // 状態 / State
+                    if (key.Equals("状態", StringComparison.OrdinalIgnoreCase) ||
+                        key.Equals("State", StringComparison.OrdinalIgnoreCase))
                     {
-                        // 「接続されました」「connected」等で、かつ「切断」「disconnected」を含まない
-                        bool isConn = (val.Contains("接続", StringComparison.OrdinalIgnoreCase) || val.Contains("connected", StringComparison.OrdinalIgnoreCase))
+                        bool isConn = (val.Contains("接続", StringComparison.OrdinalIgnoreCase) ||
+                                       val.Contains("connected", StringComparison.OrdinalIgnoreCase))
                                       && !val.Contains("切断", StringComparison.OrdinalIgnoreCase)
                                       && !val.Contains("disconnected", StringComparison.OrdinalIgnoreCase);
                         current.IsConnected = isConn;
                     }
+                    // SSID (BSSID を除外)
                     else if (key.Equals("SSID", StringComparison.OrdinalIgnoreCase))
                     {
                         if (!string.IsNullOrEmpty(val)) current.Ssid = val;
                     }
+                    // AP BSSID / BSSID
                     else if (key.Contains("BSSID", StringComparison.OrdinalIgnoreCase))
                     {
                         if (!string.IsNullOrEmpty(val)) current.Bssid = val.ToUpperInvariant();
                     }
-                    else if (key.Equals("シグナル", StringComparison.OrdinalIgnoreCase) || key.Equals("Signal", StringComparison.OrdinalIgnoreCase))
+                    // シグナル / Signal
+                    else if (key.Equals("シグナル", StringComparison.OrdinalIgnoreCase) ||
+                             key.Equals("Signal", StringComparison.OrdinalIgnoreCase))
                     {
                         var matchSig = Regex.Match(val, @"\d+");
                         if (matchSig.Success && int.TryParse(matchSig.Value, out int qual))
@@ -131,6 +155,7 @@ namespace WiFiChecker.Services
                             }
                         }
                     }
+                    // RSSI
                     else if (key.Equals("Rssi", StringComparison.OrdinalIgnoreCase))
                     {
                         if (int.TryParse(val, out int rssi))
@@ -138,22 +163,28 @@ namespace WiFiChecker.Services
                             current.SignalDbm = rssi;
                         }
                     }
+                    // 無線の種類 / Radio type
                     else if ((key.Contains("無線", StringComparison.OrdinalIgnoreCase) && key.Contains("種類", StringComparison.OrdinalIgnoreCase)) ||
                              key.Equals("Radio type", StringComparison.OrdinalIgnoreCase) ||
                              key.Contains("802.11", StringComparison.OrdinalIgnoreCase))
                     {
-                        // 「無線の状態」ではなく「無線の種類」のみを規格として取得
                         current.PhyType = ConvertRadioTypeToStandardName(val);
                     }
-                    else if (key.Equals("認証", StringComparison.OrdinalIgnoreCase) || key.Equals("Authentication", StringComparison.OrdinalIgnoreCase))
+                    // 認証 / Authentication
+                    else if (key.Equals("認証", StringComparison.OrdinalIgnoreCase) ||
+                             key.Equals("Authentication", StringComparison.OrdinalIgnoreCase))
                     {
                         current.Authentication = val;
                     }
-                    else if (key.Equals("暗号", StringComparison.OrdinalIgnoreCase) || key.Equals("Cipher", StringComparison.OrdinalIgnoreCase))
+                    // 暗号 / Cipher
+                    else if (key.Equals("暗号", StringComparison.OrdinalIgnoreCase) ||
+                             key.Equals("Cipher", StringComparison.OrdinalIgnoreCase))
                     {
                         current.Cipher = val;
                     }
-                    else if (key.Contains("チャネル", StringComparison.OrdinalIgnoreCase) || key.Contains("Channel", StringComparison.OrdinalIgnoreCase))
+                    // チャネル / Channel
+                    else if (key.Contains("チャネル", StringComparison.OrdinalIgnoreCase) ||
+                             key.Contains("Channel", StringComparison.OrdinalIgnoreCase))
                     {
                         var matchCh = Regex.Match(val, @"\d+");
                         if (matchCh.Success && int.TryParse(matchCh.Value, out int ch))
@@ -162,27 +193,35 @@ namespace WiFiChecker.Services
                             DetermineBandAndFrequency(current, ch);
                         }
                     }
-                    else if (key.Contains("バンド", StringComparison.OrdinalIgnoreCase) || key.Contains("Band", StringComparison.OrdinalIgnoreCase))
+                    // バンド / Band
+                    else if (key.Contains("バンド", StringComparison.OrdinalIgnoreCase) ||
+                             key.Contains("Band", StringComparison.OrdinalIgnoreCase))
                     {
                         if (!string.IsNullOrEmpty(val)) current.Band = val;
                     }
-                    else if (key.Contains("受信", StringComparison.OrdinalIgnoreCase) || key.Contains("Receive", StringComparison.OrdinalIgnoreCase))
+                    // 受信レート / Receive rate
+                    else if (key.Contains("受信", StringComparison.OrdinalIgnoreCase) ||
+                             key.Contains("Receive", StringComparison.OrdinalIgnoreCase))
                     {
                         var match = Regex.Match(val, @"[\d\.]+");
-                        if (match.Success && double.TryParse(match.Value, out double rx))
+                        if (match.Success && double.TryParse(match.Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double rx))
                         {
                             current.LinkSpeedRxMbps = (long)Math.Round(rx);
                         }
                     }
-                    else if (key.Contains("送信", StringComparison.OrdinalIgnoreCase) || key.Contains("Transmit", StringComparison.OrdinalIgnoreCase))
+                    // 送信レート / Transmit rate
+                    else if (key.Contains("送信", StringComparison.OrdinalIgnoreCase) ||
+                             key.Contains("Transmit", StringComparison.OrdinalIgnoreCase))
                     {
                         var match = Regex.Match(val, @"[\d\.]+");
-                        if (match.Success && double.TryParse(match.Value, out double tx))
+                        if (match.Success && double.TryParse(match.Value, NumberStyles.Any, CultureInfo.InvariantCulture, out double tx))
                         {
                             current.LinkSpeedTxMbps = (long)Math.Round(tx);
                         }
                     }
-                    else if (key.Equals("物理アドレス", StringComparison.OrdinalIgnoreCase) || key.Equals("Physical address", StringComparison.OrdinalIgnoreCase))
+                    // 物理アドレス / Physical address
+                    else if (key.Equals("物理アドレス", StringComparison.OrdinalIgnoreCase) ||
+                             key.Equals("Physical address", StringComparison.OrdinalIgnoreCase))
                     {
                         current.MacAddress = val.ToUpperInvariant();
                     }
@@ -198,6 +237,53 @@ namespace WiFiChecker.Services
             catch (Exception ex)
             {
                 Debug.WriteLine($"netsh パースエラー: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// コマンド出力を適切な文字コード（UTF-8, OEM CP932等）で自動判別デコード
+        /// </summary>
+        private string DecodeProcessOutput(byte[] bytes)
+        {
+            try
+            {
+                // 1. まず OEM コードページ（日本語 Windows の場合は CP932 / Shift_JIS）を試行
+                int oemCodePage = CultureInfo.CurrentCulture.TextInfo.OEMCodePage;
+                if (oemCodePage > 0)
+                {
+                    try
+                    {
+                        var oemEncoding = Encoding.GetEncoding(oemCodePage);
+                        string oemDecoded = oemEncoding.GetString(bytes);
+                        // 日本語または英語の主要キーワードが含まれているかチェック
+                        if (oemDecoded.Contains("状態") || oemDecoded.Contains("State") ||
+                            oemDecoded.Contains("名前") || oemDecoded.Contains("Name"))
+                        {
+                            return oemDecoded;
+                        }
+                    }
+                    catch { }
+                }
+
+                // 2. CP932 (Shift_JIS)
+                try
+                {
+                    var sjisEncoding = Encoding.GetEncoding(932);
+                    string sjisDecoded = sjisEncoding.GetString(bytes);
+                    if (sjisDecoded.Contains("状態") || sjisDecoded.Contains("名前"))
+                    {
+                        return sjisDecoded;
+                    }
+                }
+                catch { }
+
+                // 3. UTF-8
+                string utf8Decoded = Encoding.UTF8.GetString(bytes);
+                return utf8Decoded;
+            }
+            catch
+            {
+                return Encoding.Default.GetString(bytes);
             }
         }
 
@@ -237,11 +323,6 @@ namespace WiFiChecker.Services
 
         private void DetermineBandAndFrequency(WifiInfo info, int channel)
         {
-            if (info.Band != "Unknown" && !string.IsNullOrEmpty(info.Band))
-            {
-                // すでに netsh から "5 GHz" や "2.4 GHz" などが取得できている場合
-            }
-
             // 2.4 GHz 帯: Ch 1 ~ 14
             if (channel >= 1 && channel <= 14)
             {
@@ -277,15 +358,17 @@ namespace WiFiChecker.Services
                         nic.GetPhysicalAddress().ToString().ToUpperInvariant() == macClean);
                 }
 
-                // 2. インターフェイス名での一致を試みる
+                // 2. インターフェイス名 / 説明での一致を試みる
                 if (targetNic == null && !string.IsNullOrEmpty(info.InterfaceName) && info.InterfaceName != "Unknown")
                 {
                     targetNic = interfaces.FirstOrDefault(nic =>
                         string.Equals(nic.Name, info.InterfaceName, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(nic.Description, info.InterfaceName, StringComparison.OrdinalIgnoreCase));
+                        string.Equals(nic.Description, info.InterfaceName, StringComparison.OrdinalIgnoreCase) ||
+                        nic.Description.Contains(info.InterfaceName, StringComparison.OrdinalIgnoreCase) ||
+                        info.InterfaceName.Contains(nic.Description, StringComparison.OrdinalIgnoreCase));
                 }
 
-                // 3. Wireless80211 で Up のものを試みる
+                // 3. Wireless80211 で OperationalStatus.Up のものを試みる
                 if (targetNic == null)
                 {
                     targetNic = interfaces.FirstOrDefault(nic =>
@@ -293,7 +376,7 @@ namespace WiFiChecker.Services
                         nic.OperationalStatus == OperationalStatus.Up);
                 }
 
-                // 4. フォールバック
+                // 4. Wireless80211 のいずれかを試行
                 targetNic ??= interfaces.FirstOrDefault(nic => nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
                              ?? interfaces.FirstOrDefault(nic => nic.OperationalStatus == OperationalStatus.Up);
 
@@ -306,7 +389,11 @@ namespace WiFiChecker.Services
 
                     if (string.Equals(info.MacAddress, "00:00:00:00:00:00") || string.IsNullOrEmpty(info.MacAddress))
                     {
-                        info.MacAddress = string.Join(":", targetNic.GetPhysicalAddress().GetAddressBytes().Select(b => b.ToString("X2")));
+                        var bytes = targetNic.GetPhysicalAddress().GetAddressBytes();
+                        if (bytes.Length == 6)
+                        {
+                            info.MacAddress = string.Join(":", bytes.Select(b => b.ToString("X2")));
+                        }
                     }
 
                     var ipProps = targetNic.GetIPProperties();
@@ -353,3 +440,4 @@ namespace WiFiChecker.Services
         }
     }
 }
+
