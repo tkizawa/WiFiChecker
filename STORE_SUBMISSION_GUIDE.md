@@ -89,16 +89,84 @@ PowerShell（PowerShell 7 推奨）を開き、プロジェクトルートで以
 - 通常「全年齢 (All Ages / 3歳以上)」のレーティングが自動付与されます。
 
 ### 5.4 ストア掲載情報 (Store listings)
-- 言語ごと（日本語 `ja-JP`、英語 `en-US`）に以下を入力します：
-  - **説明文**: アプリの概要、機能一覧（電波強度グラフ表示、リンク速度確認、IP・SSID表示など）
-  - **新機能**: 初回リリース時は「初回リリース」など
-  - **製品の特長 (Product features)**:
-    - リアルタイムなWi-Fi接続状態の確認
-    - 電波強度（RSSI / パーセント表示）
-    - リンク速度（送受信速度）のモニタリング
-    - 接続中のアクセスポイント情報（BSSID, チャンネル, 周波数帯）
-  - **スクリーンショット**:
-    - アプリ画面のスクリーンショット（PNG形式、1366x768 または 1920x1080 推奨）を1枚以上添付
+言語ごと（日本語 `ja-JP`、英語 `en-US`）に以下のテキストをコピー＆ペーストして使用できます。
+
+#### 🇯🇵 日本語 (ja-JP)
+- **説明 (Description)**:
+  ```text
+  WiFiChecker は、Windows PC が接続している Wi-Fi アクセスポイントの電波状況や詳細情報をリアルタイムに確認・モニタリングできる軽量でモダンなユーティリティツールです。
+
+  テレワークやオンライン会議、ゲームプレイ中に「Wi-Fiが遅い」「接続が途切れる」と感じた際、現在の電波強度やリンク速度、接続している周波数帯（2.4GHz / 5GHz / 6GHz）を素早くチェックできます。
+
+  【主な機能】
+  ■ 電波強度（RSSI）のリアルタイムモニタリング
+  現在の信号強度をパーセンテージとカラープログレスバーで直感的に可視化します。
+
+  ■ リンク速度の表示
+  アクセスポイントとPC間の受信速度（Rx）および送信速度（Tx）のリンク速度（Mbps）をリアルタイムに確認できます。
+
+  ■ 接続中の Wi-Fi 詳細情報
+  SSID（ネットワーク名）、BSSID（MACアドレス）、Wi-Fi規格（Wi-Fi 6 / 802.11ax、Wi-Fi 5 / 802.11ac など）、周波数帯、チャンネル番号を一目で把握できます。
+
+  ■ 柔軟な更新設定
+  1秒〜10秒間隔での自動更新に対応。もちろんワンクリックでの即時手動更新も可能です。
+
+  ■ 多言語対応 & 設定保存
+  Windows のシステム言語に応じて日本語と英語を自動切り替え。ウィンドウの位置やサイズ、更新間隔などの設定は自動で保存・復元されます。
+  ```
+- **製品の特長 (Product features)** (1行ずつ追加):
+  - `Wi-Fi 電波強度（RSSI）のリアルタイム可視化`
+  - `送受信リンク速度（Rx/Tx Mbps）のモニタリング`
+  - `接続中アクセスポイントの詳細情報（SSID、BSSID、周波数帯、チャンネル、Wi-Fi規格）の表示`
+  - `1秒〜10秒の自動更新間隔の調整および手動更新機能`
+  - `日本語・英語のバイリンガル対応`
+  - `ウィンドウ位置・サイズの自動保存・復元`
+- **今回のリリースで新しくなった点 (What's new in this version)**:
+  ```text
+  初回リリース
+  - Wi-Fi 接続状況・電波強度・リンク速度チェッカー
+  - x64 および Arm64 ネイティブ対応
+  ```
+
+#### 🇺🇸 英語 (en-US)
+- **Description**:
+  ```text
+  WiFiChecker is a lightweight, modern Windows desktop utility designed to monitor and visualize your Wi-Fi connection status, signal strength, and network details in real time.
+
+  When experiencing slow connections or unstable network during remote work, video calls, or online gaming, WiFiChecker helps you instantly diagnose your Wi-Fi link speed, signal quality, and connected frequency band (2.4 GHz / 5 GHz / 6 GHz).
+
+  [Key Features]
+  ■ Real-Time Signal Strength (RSSI) Monitoring
+  Visualizes current Wi-Fi signal strength with percentage and dynamic colored progress indicators.
+
+  ■ Link Speed Monitoring
+  Monitors real-time receive (Rx) and transmit (Tx) link speeds (Mbps) between your PC and the Wi-Fi access point.
+
+  ■ Detailed Network Information
+  Displays SSID, BSSID (MAC address), Wi-Fi standard (Wi-Fi 6 / 802.11ax, Wi-Fi 5 / 802.11ac, etc.), frequency band, and channel number at a glance.
+
+  ■ Flexible Auto-Refresh
+  Supports automatic background refreshes from 1 to 10 seconds, plus instant manual refresh on demand.
+
+  ■ Multilingual & State Persistence
+  Automatically adapts between English and Japanese based on Windows display settings. Saves and restores your window size, position, and preferences automatically.
+  ```
+- **Product features**:
+  - `Real-time Wi-Fi signal strength (RSSI) monitoring with visual indicators`
+  - `Live receive/transmit link speed (Rx/Tx Mbps) diagnostics`
+  - `Comprehensive AP details: SSID, BSSID, Wi-Fi protocol, band, and channel`
+  - `Adjustable auto-refresh interval (1–10s) and manual refresh`
+  - `Bilingual support (English & Japanese)`
+  - `Native performance for both x64 and Arm64 architectures`
+- **What's new in this version**:
+  ```text
+  Initial release
+  - Real-time Wi-Fi connection, signal quality, and link speed monitor
+  - Native support for x64 and Arm64 devices
+  ```
+
+- **スクリーンショット**:
+  - アプリ画面のスクリーンショット（PNG形式、1366x768 または 1920x1080 推奨）を1枚以上添付
 
 ### 5.5 価格と提供状況 (Pricing and availability)
 - **価格**: 無料（または有料）
