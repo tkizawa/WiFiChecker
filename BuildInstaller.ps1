@@ -1,11 +1,16 @@
 # WiFiChecker インストーラビルドスクリプト (Rules compliant)
 $ErrorActionPreference = "Stop"
 
-$version = "1.0.0.0"
-$installerDir = Join-Path $PSScriptRoot "Installer"
 $setupProj = Join-Path $PSScriptRoot "Setup\Setup.csproj"
 $mainProj = Join-Path $PSScriptRoot "WiFiChecker.csproj"
 $payloadZip = Join-Path $PSScriptRoot "Setup\payload.zip"
+
+[xml]$projXml = Get-Content $mainProj
+$version = $projXml.Project.PropertyGroup.AssemblyVersion
+if (-not $version) { $version = $projXml.Project.PropertyGroup.FileVersion }
+if (-not $version) { $version = "1.0.0.0" }
+
+$installerDir = Join-Path $PSScriptRoot "Installer"
 
 if (-not (Test-Path $installerDir)) {
     New-Item -ItemType Directory -Path $installerDir | Out-Null
