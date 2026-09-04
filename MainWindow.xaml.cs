@@ -33,6 +33,12 @@ namespace WiFiChecker
         {
             RestoreWindowPosition();
             ApplyLocalization();
+
+            var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            if (ver != null)
+            {
+                AppVersionText.Text = $"WiFiChecker v{ver.ToString(4)}";
+            }
         }
 
         private void RestoreWindowPosition()

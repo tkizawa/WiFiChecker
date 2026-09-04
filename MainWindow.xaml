@@ -247,7 +247,7 @@
         <Border Grid.Row="2" Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="0,1,0,0" Padding="20,10">
             <Grid>
                 <TextBlock x:Name="LastUpdatedText" Text="最終更新: 2026-09-02 23:30:00" FontSize="11" Foreground="#9CA3AF" VerticalAlignment="Center" />
-                <TextBlock Text="WiFiChecker v1.0.0.0" FontSize="11" Foreground="#9CA3AF" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock x:Name="AppVersionText" Text="WiFiChecker v1.0.1.0" FontSize="11" Foreground="#9CA3AF" HorizontalAlignment="Right" VerticalAlignment="Center" />
             </Grid>
         </Border>
 

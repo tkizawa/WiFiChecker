@@ -15,7 +15,7 @@ namespace WiFiChecker.Setup
         public const string DisplayName = "Wi-Fi アクセスポイント チェッカー";
         public const string DisplayNameEn = "Wi-Fi Access Point Checker";
         public const string Publisher = "tkizawa";
-        public const string Version = "1.0.0.0";
+        public const string Version = "1.0.1.0";
         public const string MainExeName = "WiFiChecker.exe";
         public const string UninstallExeName = "Uninstall.exe";
 

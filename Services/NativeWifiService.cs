@@ -34,11 +34,16 @@ namespace WiFiChecker.Services
 
                 try
                 {
-                    var interfaceList = Marshal.PtrToStructure<WLAN_INTERFACE_INFO_LIST>(interfaceListPtr);
-                    int offset = Marshal.OffsetOf<WLAN_INTERFACE_INFO_LIST>("InterfaceInfo").ToInt32();
+                    uint numberOfItems = (uint)Marshal.ReadInt32(interfaceListPtr, 0);
+                    if (numberOfItems == 0)
+                    {
+                        return null;
+                    }
+
+                    int offset = 8; // dwNumberOfItems (4) + dwIndex (4)
                     int structSize = Marshal.SizeOf<WLAN_INTERFACE_INFO>();
 
-                    for (int i = 0; i < interfaceList.dwNumberOfItems; i++)
+                    for (int i = 0; i < numberOfItems; i++)
                     {
                         IntPtr currentPtr = new IntPtr(interfaceListPtr.ToInt64() + offset + (i * structSize));
                         var info = Marshal.PtrToStructure<WLAN_INTERFACE_INFO>(currentPtr);
@@ -172,7 +177,7 @@ namespace WiFiChecker.Services
                 }
 
                 // 8. 周波数・詳細なRSSIを BssList から補完取得
-                EnrichBssListInfo(clientHandle, guid, wifiInfo, conn.wlanAssociationAttributes.dot11Ssid);
+                EnrichBssListInfo(clientHandle, guid, wifiInfo);
 
                 return wifiInfo;
             }
@@ -201,102 +206,98 @@ namespace WiFiChecker.Services
             }
         }
 
-        private static void EnrichBssListInfo(IntPtr clientHandle, Guid guid, WifiInfo wifiInfo, DOT11_SSID ssid)
+        private static void EnrichBssListInfo(IntPtr clientHandle, Guid guid, WifiInfo wifiInfo)
         {
-            IntPtr ssidPtr = IntPtr.Zero;
+            if (string.IsNullOrEmpty(wifiInfo.Bssid))
+            {
+                return;
+            }
+
+            IntPtr bssListPtr = IntPtr.Zero;
             try
             {
-                ssidPtr = Marshal.AllocHGlobal(Marshal.SizeOf<DOT11_SSID>());
-                Marshal.StructureToPtr(ssid, ssidPtr, false);
-
+                // 全てのBSSリストを取得
                 uint result = WlanGetNetworkBssList(
                     clientHandle,
                     ref guid,
-                    ssidPtr,
-                    DOT11_BSS_TYPE.dot11_BSS_type_any,
-                    true,
                     IntPtr.Zero,
-                    out IntPtr bssListPtr);
-
-                Marshal.FreeHGlobal(ssidPtr);
-                ssidPtr = IntPtr.Zero;
+                    DOT11_BSS_TYPE.dot11_BSS_type_any,
+                    false,
+                    IntPtr.Zero,
+                    out bssListPtr);
 
                 if (result != 0 || bssListPtr == IntPtr.Zero)
                 {
-                    // SSID指定なしで再取得を試行
-                    result = WlanGetNetworkBssList(
-                        clientHandle,
-                        ref guid,
-                        IntPtr.Zero,
-                        DOT11_BSS_TYPE.dot11_BSS_type_any,
-                        true,
-                        IntPtr.Zero,
-                        out bssListPtr);
+                    return;
                 }
 
-                if (result == 0 && bssListPtr != IntPtr.Zero)
+                try
                 {
-                    try
+                    // 先頭8バイトのヘッダ (dwTotalSize, dwNumberOfItems) を安全に取得
+                    uint totalSize = (uint)Marshal.ReadInt32(bssListPtr, 0);
+                    uint numItems = (uint)Marshal.ReadInt32(bssListPtr, 4);
+
+                    if (numItems == 0 || totalSize < 8)
                     {
-                        var bssList = Marshal.PtrToStructure<WLAN_BSS_LIST>(bssListPtr);
-                        int offset = Marshal.OffsetOf<WLAN_BSS_LIST>("wlanBssEntries").ToInt32();
-                        int entrySize = Marshal.SizeOf<WLAN_BSS_ENTRY>();
+                        return;
+                    }
 
-                        // dwNumberOfItems が異常値でないこと、dwTotalSize を超えないことをチェック
-                        uint maxItems = Math.Min(bssList.dwNumberOfItems, 256);
-                        for (int i = 0; i < maxItems; i++)
+                    // WLAN_BSS_ENTRY の1要素サイズは 360 バイト
+                    const int entrySize = 360;
+                    const int bssidOffset = 40;  // DOT11_MAC_ADDRESS (6 bytes)
+                    const int rssiOffset = 56;   // LONG lRssi (4 bytes)
+                    const int freqOffset = 92;   // ULONG ulChCenterFrequency (4 bytes)
+
+                    long baseAddress = bssListPtr.ToInt64();
+                    uint maxItems = Math.Min(numItems, 512);
+
+                    for (uint i = 0; i < maxItems; i++)
+                    {
+                        long entryOffset = 8 + (i * entrySize);
+                        if (entryOffset + entrySize > totalSize)
                         {
-                            long itemOffset = offset + (i * entrySize);
-                            if (itemOffset + entrySize > bssList.dwTotalSize)
+                            break;
+                        }
+
+                        // BSSID (6 bytes) を読み取り
+                        byte b0 = Marshal.ReadByte(new IntPtr(baseAddress + entryOffset + bssidOffset + 0));
+                        byte b1 = Marshal.ReadByte(new IntPtr(baseAddress + entryOffset + bssidOffset + 1));
+                        byte b2 = Marshal.ReadByte(new IntPtr(baseAddress + entryOffset + bssidOffset + 2));
+                        byte b3 = Marshal.ReadByte(new IntPtr(baseAddress + entryOffset + bssidOffset + 3));
+                        byte b4 = Marshal.ReadByte(new IntPtr(baseAddress + entryOffset + bssidOffset + 4));
+                        byte b5 = Marshal.ReadByte(new IntPtr(baseAddress + entryOffset + bssidOffset + 5));
+
+                        string bssid = $"{b0:X2}:{b1:X2}:{b2:X2}:{b3:X2}:{b4:X2}:{b5:X2}";
+
+                        if (string.Equals(bssid, wifiInfo.Bssid, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // RSSI (dBm)
+                            int lRssi = Marshal.ReadInt32(new IntPtr(baseAddress + entryOffset + rssiOffset));
+                            if (lRssi < 0)
                             {
-                                break;
+                                wifiInfo.SignalDbm = lRssi;
                             }
 
-                            IntPtr entryPtr = new IntPtr(bssListPtr.ToInt64() + itemOffset);
-                            var entry = Marshal.PtrToStructure<WLAN_BSS_ENTRY>(entryPtr);
-
-                            if (entry.dot11Bssid != null && entry.dot11Bssid.Length >= 6)
+                            // 周波数 (kHz -> GHz / チャンネル)
+                            uint ulFreq = (uint)Marshal.ReadInt32(new IntPtr(baseAddress + entryOffset + freqOffset));
+                            if (ulFreq > 0)
                             {
-                                string bssid = string.Format("{0:X2}:{1:X2}:{2:X2}:{3:X2}:{4:X2}:{5:X2}",
-                                    entry.dot11Bssid[0], entry.dot11Bssid[1], entry.dot11Bssid[2],
-                                    entry.dot11Bssid[3], entry.dot11Bssid[4], entry.dot11Bssid[5]);
-
-                                if (string.Equals(bssid, wifiInfo.Bssid, StringComparison.OrdinalIgnoreCase))
-                                {
-                                    // RSSI (dBm)
-                                    if (entry.lRssi < 0)
-                                    {
-                                        wifiInfo.SignalDbm = (int)entry.lRssi;
-                                    }
-
-                                    // 周波数 (kHz -> GHz / チャンネル)
-                                    if (entry.ulChCenterFrequency > 0)
-                                    {
-                                        double freqMhz = entry.ulChCenterFrequency / 1000.0;
-                                        wifiInfo.FrequencyGhz = freqMhz / 1000.0;
-                                        (wifiInfo.Band, wifiInfo.Channel) = CalculateBandAndChannel(freqMhz);
-                                    }
-                                    break;
-                                }
+                                double freqMhz = ulFreq / 1000.0;
+                                wifiInfo.FrequencyGhz = freqMhz / 1000.0;
+                                (wifiInfo.Band, wifiInfo.Channel) = CalculateBandAndChannel(freqMhz);
                             }
+                            break;
                         }
                     }
-                    finally
-                    {
-                        WlanFreeMemory(bssListPtr);
-                    }
+                }
+                finally
+                {
+                    WlanFreeMemory(bssListPtr);
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"EnrichBssListInfo エラー: {ex.Message}");
-            }
-            finally
-            {
-                if (ssidPtr != IntPtr.Zero)
-                {
-                    Marshal.FreeHGlobal(ssidPtr);
-                }
             }
         }
 
@@ -428,13 +429,7 @@ namespace WiFiChecker.Services
             public WLAN_INTERFACE_STATE isState;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct WLAN_INTERFACE_INFO_LIST
-        {
-            public uint dwNumberOfItems;
-            public uint dwIndex;
-            public WLAN_INTERFACE_INFO InterfaceInfo;
-        }
+
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct WLAN_CONNECTION_ATTRIBUTES
@@ -480,44 +475,7 @@ namespace WiFiChecker.Services
             public byte[] ucSSID;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct WLAN_BSS_LIST
-        {
-            public uint dwTotalSize;
-            public uint dwNumberOfItems;
-            public WLAN_BSS_ENTRY wlanBssEntries;
-        }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct WLAN_BSS_ENTRY
-        {
-            public DOT11_SSID dot11Ssid;
-            public uint uPhyId;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)]
-            public byte[] dot11Bssid;
-            public DOT11_BSS_TYPE dot11BssType;
-            public DOT11_PHY_TYPE dot11BssPhyType;
-            public int lRssi;
-            public uint uLinkQuality;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool bInRegDomain;
-            public ushort usBeaconPeriod;
-            public ulong ullTimestamp;
-            public ulong ullHostTimestamp;
-            public ushort usCapabilityInformation;
-            public uint ulChCenterFrequency;
-            public WLAN_RATE_SET wlanRateSet;
-            public uint ulIeOffset;
-            public uint ulIeSize;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct WLAN_RATE_SET
-        {
-            public uint uRateSetLength;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 126)]
-            public ushort[] usRateSet;
-        }
 
         private enum WLAN_INTERFACE_STATE : uint
         {
