@@ -303,6 +303,7 @@ namespace WiFiChecker.Services
             target.LinkSpeedRxMbps = source.LinkSpeedRxMbps;
             target.LinkSpeedTxMbps = source.LinkSpeedTxMbps;
             target.InterfaceName = source.InterfaceName;
+            target.InterfaceGuid = source.InterfaceGuid;
             target.MacAddress = source.MacAddress;
             target.NetworkCategory = source.NetworkCategory;
         }
@@ -349,87 +350,126 @@ namespace WiFiChecker.Services
             {
                 var interfaces = NetworkInterface.GetAllNetworkInterfaces();
 
-                // 1. MACアドレスでの一致を試みる
                 NetworkInterface? targetNic = null;
-                if (!string.IsNullOrEmpty(info.MacAddress) && info.MacAddress != "00:00:00:00:00:00")
+
+                // 1. GUID での完全一致を最優先（Native Wifi API で判明している場合）
+                if (info.InterfaceGuid != Guid.Empty)
+                {
+                    string guidBraced = info.InterfaceGuid.ToString("B");
+                    string guidHyphen = info.InterfaceGuid.ToString("D");
+                    targetNic = interfaces.FirstOrDefault(nic =>
+                        string.Equals(nic.Id, guidBraced, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(nic.Id, guidHyphen, StringComparison.OrdinalIgnoreCase));
+                }
+
+                // 2. MACアドレスでの一致を試みる
+                if (targetNic == null && !string.IsNullOrEmpty(info.MacAddress) && info.MacAddress != "00:00:00:00:00:00")
                 {
                     string macClean = info.MacAddress.Replace(":", "").Replace("-", "").ToUpperInvariant();
                     targetNic = interfaces.FirstOrDefault(nic =>
-                        nic.GetPhysicalAddress().ToString().ToUpperInvariant() == macClean);
-                }
-
-                // 2. インターフェイス名 / 説明での一致を試みる
-                if (targetNic == null && !string.IsNullOrEmpty(info.InterfaceName) && info.InterfaceName != "Unknown")
-                {
-                    targetNic = interfaces.FirstOrDefault(nic =>
-                        string.Equals(nic.Name, info.InterfaceName, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(nic.Description, info.InterfaceName, StringComparison.OrdinalIgnoreCase) ||
-                        nic.Description.Contains(info.InterfaceName, StringComparison.OrdinalIgnoreCase) ||
-                        info.InterfaceName.Contains(nic.Description, StringComparison.OrdinalIgnoreCase));
-                }
-
-                // 3. Wireless80211 で OperationalStatus.Up のものを試みる
-                if (targetNic == null)
-                {
-                    targetNic = interfaces.FirstOrDefault(nic =>
-                        nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 &&
+                        nic.GetPhysicalAddress().ToString().ToUpperInvariant() == macClean &&
                         nic.OperationalStatus == OperationalStatus.Up);
                 }
 
-                // 4. Wireless80211 のいずれかを試行
-                targetNic ??= interfaces.FirstOrDefault(nic => nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
-                             ?? interfaces.FirstOrDefault(nic => nic.OperationalStatus == OperationalStatus.Up);
+                // 3. OperationalStatus.Up かつ Wireless80211 で、仮想フィルタを除外したアクティブなWi-Fi
+                if (targetNic == null)
+                {
+                    var wirelessNics = interfaces
+                        .Where(nic => nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 &&
+                                      nic.OperationalStatus == OperationalStatus.Up &&
+                                      !nic.Name.Contains("Filter") && !nic.Description.Contains("Filter") &&
+                                      !nic.Name.Contains("Packet Scheduler") && !nic.Description.Contains("Packet Scheduler"))
+                        .ToList();
+
+                    // デフォルトゲートウェイを持つものを最優先
+                    targetNic = wirelessNics.FirstOrDefault(nic =>
+                        nic.GetIPProperties().GatewayAddresses.Any(gw => gw.Address.AddressFamily == AddressFamily.InterNetwork))
+                        ?? wirelessNics.FirstOrDefault();
+                }
+
+                // 4. フォールバック: インターフェイス名または説明での一致
+                if (targetNic == null && !string.IsNullOrEmpty(info.InterfaceName) && info.InterfaceName != "Unknown")
+                {
+                    targetNic = interfaces.FirstOrDefault(nic =>
+                        nic.OperationalStatus == OperationalStatus.Up &&
+                        (string.Equals(nic.Name, info.InterfaceName, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(nic.Description, info.InterfaceName, StringComparison.OrdinalIgnoreCase)));
+                }
+
+                // 5. 最後のフォールバック
+                targetNic ??= interfaces.FirstOrDefault(nic =>
+                    nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 &&
+                    nic.OperationalStatus == OperationalStatus.Up);
 
                 if (targetNic != null)
                 {
-                    if (string.Equals(info.InterfaceName, "Unknown", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(info.InterfaceName))
+                    // アダプター名（OS上のフレンドリー名: 例: "Wi-Fi"）
+                    if (!string.IsNullOrEmpty(targetNic.Name))
                     {
                         info.InterfaceName = targetNic.Name;
                     }
 
-                    if (string.Equals(info.MacAddress, "00:00:00:00:00:00") || string.IsNullOrEmpty(info.MacAddress))
+                    // PC MAC アドレス
+                    var bytes = targetNic.GetPhysicalAddress().GetAddressBytes();
+                    if (bytes.Length == 6)
                     {
-                        var bytes = targetNic.GetPhysicalAddress().GetAddressBytes();
-                        if (bytes.Length == 6)
-                        {
-                            info.MacAddress = string.Join(":", bytes.Select(b => b.ToString("X2")));
-                        }
+                        info.MacAddress = string.Join(":", bytes.Select(b => b.ToString("X2")));
                     }
 
                     var ipProps = targetNic.GetIPProperties();
 
-                    // IPv4
-                    var ipv4Unicast = ipProps.UnicastAddresses
+                    // IPv4: APIPA (169.254.x.x) を除外した正規のIPアドレスを最優先
+                    var validIpv4 = ipProps.UnicastAddresses
+                        .FirstOrDefault(ip => ip.Address.AddressFamily == AddressFamily.InterNetwork &&
+                                              !ip.Address.ToString().StartsWith("169.254."));
+                    validIpv4 ??= ipProps.UnicastAddresses
                         .FirstOrDefault(ip => ip.Address.AddressFamily == AddressFamily.InterNetwork);
-                    if (ipv4Unicast != null)
+
+                    if (validIpv4 != null)
                     {
-                        info.Ipv4Address = ipv4Unicast.Address.ToString();
-                        info.SubnetMask = ipv4Unicast.IPv4Mask?.ToString() ?? "-";
+                        info.Ipv4Address = validIpv4.Address.ToString();
+                        info.SubnetMask = validIpv4.IPv4Mask?.ToString() ?? "-";
                     }
 
-                    // IPv6
-                    var ipv6Unicast = ipProps.UnicastAddresses
-                        .FirstOrDefault(ip => ip.Address.AddressFamily == AddressFamily.InterNetworkV6 && !ip.Address.IsIPv6LinkLocal);
-                    if (ipv6Unicast != null)
+                    // IPv6: リンクローカル以外のグローバル/一時アドレスを優先
+                    var ipv6Global = ipProps.UnicastAddresses
+                        .FirstOrDefault(ip => ip.Address.AddressFamily == AddressFamily.InterNetworkV6 &&
+                                              !ip.Address.IsIPv6LinkLocal &&
+                                              !ip.Address.IsIPv6SiteLocal);
+                    ipv6Global ??= ipProps.UnicastAddresses
+                        .FirstOrDefault(ip => ip.Address.AddressFamily == AddressFamily.InterNetworkV6);
+
+                    if (ipv6Global != null)
                     {
-                        info.Ipv6Address = ipv6Unicast.Address.ToString();
+                        info.Ipv6Address = ipv6Global.Address.ToString();
                     }
 
-                    // Default Gateway
-                    var gateway = ipProps.GatewayAddresses
-                        .FirstOrDefault(gw => gw.Address.AddressFamily == AddressFamily.InterNetwork || gw.Address.AddressFamily == AddressFamily.InterNetworkV6);
-                    if (gateway != null)
+                    // デフォルトゲートウェイ: IPv4 を最優先
+                    var ipv4Gw = ipProps.GatewayAddresses
+                        .FirstOrDefault(gw => gw.Address.AddressFamily == AddressFamily.InterNetwork &&
+                                              !string.IsNullOrEmpty(gw.Address.ToString()) &&
+                                              gw.Address.ToString() != "0.0.0.0");
+                    var anyGw = ipv4Gw ?? ipProps.GatewayAddresses.FirstOrDefault();
+                    if (anyGw != null)
                     {
-                        info.GatewayAddress = gateway.Address.ToString();
+                        info.GatewayAddress = anyGw.Address.ToString();
                     }
 
-                    // DNS
-                    var dns = ipProps.DnsAddresses
-                        .Where(d => d.AddressFamily == AddressFamily.InterNetwork || d.AddressFamily == AddressFamily.InterNetworkV6)
-                        .Select(d => d.ToString());
-                    if (dns.Any())
+                    // DNS サーバー
+                    var dnsList = ipProps.DnsAddresses
+                        .Where(d => d.AddressFamily == AddressFamily.InterNetwork ||
+                                   (d.AddressFamily == AddressFamily.InterNetworkV6 && !d.IsIPv6LinkLocal))
+                        .Select(d => d.ToString())
+                        .ToList();
+
+                    if (!dnsList.Any())
                     {
-                        info.DnsServers = string.Join(", ", dns);
+                        dnsList = ipProps.DnsAddresses.Select(d => d.ToString()).ToList();
+                    }
+
+                    if (dnsList.Any())
+                    {
+                        info.DnsServers = string.Join(", ", dnsList);
                     }
                 }
             }

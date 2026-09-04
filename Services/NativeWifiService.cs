@@ -106,6 +106,7 @@ namespace WiFiChecker.Services
                 {
                     IsConnected = true,
                     InterfaceName = iface.strInterfaceDescription,
+                    InterfaceGuid = guid,
                     LastRefreshed = DateTime.Now
                 };
 

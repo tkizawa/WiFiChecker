@@ -22,6 +22,7 @@ namespace WiFiChecker.Models
         public long LinkSpeedTxMbps { get; set; } = 0;
 
         public string InterfaceName { get; set; } = "Unknown";
+        public Guid InterfaceGuid { get; set; } = Guid.Empty;
         public string MacAddress { get; set; } = "00:00:00:00:00:00";
         public string Ipv4Address { get; set; } = "-";
         public string SubnetMask { get; set; } = "-";
