@@ -53,18 +53,8 @@ namespace WiFiChecker.Services
                         }
                     }
 
-                    // 接続中のインターフェイスがなければ、先頭のインターフェイス情報を切断状態で返す
-                    if (interfaceList.dwNumberOfItems > 0)
-                    {
-                        IntPtr firstPtr = new IntPtr(interfaceListPtr.ToInt64() + offset);
-                        var firstInfo = Marshal.PtrToStructure<WLAN_INTERFACE_INFO>(firstPtr);
-                        return new WifiInfo
-                        {
-                            IsConnected = false,
-                            InterfaceName = firstInfo.strInterfaceDescription,
-                            LastRefreshed = DateTime.Now
-                        };
-                    }
+                    // 接続中のインターフェイスが取得できなかった場合は null を返し、netsh のフォールバックに任せる
+                    return null;
                 }
                 finally
                 {
@@ -153,7 +143,34 @@ namespace WiFiChecker.Services
                 wifiInfo.Authentication = ConvertAuthAlgorithm(conn.wlanSecurityAttributes.dot11AuthAlgorithm);
                 wifiInfo.Cipher = ConvertCipherAlgorithm(conn.wlanSecurityAttributes.dot11CipherAlgorithm);
 
-                // 7. 周波数・チャンネル・RSSIの詳細を BssList から取得
+                // 7. チャンネル番号を WlanQueryInterface (wlan_intf_opcode_channel_number = 8) から直接取得
+                uint chResult = WlanQueryInterface(
+                    clientHandle,
+                    ref guid,
+                    WLAN_INTF_OPCODE.wlan_intf_opcode_channel_number,
+                    IntPtr.Zero,
+                    out uint chDataSize,
+                    out IntPtr chDataPtr,
+                    out _);
+
+                if (chResult == 0 && chDataPtr != IntPtr.Zero && chDataSize >= 4)
+                {
+                    try
+                    {
+                        int ch = Marshal.ReadInt32(chDataPtr);
+                        if (ch > 0)
+                        {
+                            wifiInfo.Channel = ch;
+                            ApplyChannelAndBand(wifiInfo, ch);
+                        }
+                    }
+                    finally
+                    {
+                        WlanFreeMemory(chDataPtr);
+                    }
+                }
+
+                // 8. 周波数・詳細なRSSIを BssList から補完取得
                 EnrichBssListInfo(clientHandle, guid, wifiInfo, conn.wlanAssociationAttributes.dot11Ssid);
 
                 return wifiInfo;
@@ -161,6 +178,25 @@ namespace WiFiChecker.Services
             finally
             {
                 WlanFreeMemory(dataPtr);
+            }
+        }
+
+        private static void ApplyChannelAndBand(WifiInfo info, int channel)
+        {
+            if (channel >= 1 && channel <= 14)
+            {
+                info.Band = "2.4 GHz";
+                info.FrequencyGhz = channel == 14 ? 2.484 : 2.407 + (channel * 0.005);
+            }
+            else if (channel >= 32 && channel <= 177)
+            {
+                info.Band = "5 GHz";
+                info.FrequencyGhz = 5.000 + (channel * 0.005);
+            }
+            else if (channel >= 1 && channel <= 233 && (info.PhyType.Contains("Wi-Fi 6E") || info.PhyType.Contains("Wi-Fi 7") || info.PhyType.Contains("802.11ax") || info.PhyType.Contains("802.11be")))
+            {
+                info.Band = "6 GHz";
+                info.FrequencyGhz = 5.950 + (channel * 0.005);
             }
         }
 
@@ -496,18 +532,23 @@ namespace WiFiChecker.Services
 
         private enum WLAN_INTF_OPCODE : uint
         {
-            wlan_intf_opcode_autoconf_start = 0x000000000,
-            wlan_intf_opcode_connection_mode,
-            wlan_intf_opcode_radio_state,
-            wlan_intf_opcode_current_connection,
-            wlan_intf_opcode_supported_infrastructure_auth_cipher_pairs,
-            wlan_intf_opcode_supported_adhoc_auth_cipher_pairs,
-            wlan_intf_opcode_supported_country_or_region_string_list,
-            wlan_intf_opcode_current_operation_mode,
-            wlan_intf_opcode_supported_safe_mode,
-            wlan_intf_opcode_certified_safe_mode,
-            wlan_intf_opcode_hosted_network_capable,
-            wlan_intf_opcode_management_frame_protection_capable,
+            wlan_intf_opcode_autoconf_start = 0x00000000,
+            wlan_intf_opcode_autoconf_enabled = 1,
+            wlan_intf_opcode_background_scan_enabled = 2,
+            wlan_intf_opcode_media_streaming_mode = 3,
+            wlan_intf_opcode_radio_state = 4,
+            wlan_intf_opcode_bss_type = 5,
+            wlan_intf_opcode_interface_state = 6,
+            wlan_intf_opcode_current_connection = 7,
+            wlan_intf_opcode_channel_number = 8,
+            wlan_intf_opcode_supported_infrastructure_auth_cipher_pairs = 9,
+            wlan_intf_opcode_supported_adhoc_auth_cipher_pairs = 10,
+            wlan_intf_opcode_supported_country_or_region_string_list = 11,
+            wlan_intf_opcode_current_operation_mode = 12,
+            wlan_intf_opcode_supported_safe_mode = 13,
+            wlan_intf_opcode_certified_safe_mode = 14,
+            wlan_intf_opcode_hosted_network_capable = 15,
+            wlan_intf_opcode_management_frame_protection_capable = 16,
             wlan_intf_opcode_autoconf_end = 0x0fffffff
         }
 
