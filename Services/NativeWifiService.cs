@@ -98,8 +98,13 @@ namespace WiFiChecker.Services
                 out IntPtr dataPtr,
                 out _);
 
-            if (result != 0 || dataPtr == IntPtr.Zero)
+            int requiredSize = Marshal.SizeOf<WLAN_CONNECTION_ATTRIBUTES>();
+            if (result != 0 || dataPtr == IntPtr.Zero || dataSize < requiredSize)
             {
+                if (dataPtr != IntPtr.Zero)
+                {
+                    WlanFreeMemory(dataPtr);
+                }
                 return null;
             }
 
@@ -118,14 +123,20 @@ namespace WiFiChecker.Services
                 if (conn.wlanAssociationAttributes.dot11Ssid.uSSIDLength > 0)
                 {
                     byte[] rawSsid = conn.wlanAssociationAttributes.dot11Ssid.ucSSID;
-                    int length = (int)conn.wlanAssociationAttributes.dot11Ssid.uSSIDLength;
-                    wifiInfo.Ssid = Encoding.UTF8.GetString(rawSsid, 0, length);
+                    int length = (int)Math.Min(conn.wlanAssociationAttributes.dot11Ssid.uSSIDLength, (uint)(rawSsid?.Length ?? 0));
+                    if (rawSsid != null && length > 0)
+                    {
+                        wifiInfo.Ssid = Encoding.UTF8.GetString(rawSsid, 0, length);
+                    }
                 }
 
                 // 2. BSSID (MAC)
-                byte[] bssidBytes = conn.wlanAssociationAttributes.dot11Bssid;
-                wifiInfo.Bssid = string.Format("{0:X2}:{1:X2}:{2:X2}:{3:X2}:{4:X2}:{5:X2}",
-                    bssidBytes[0], bssidBytes[1], bssidBytes[2], bssidBytes[3], bssidBytes[4], bssidBytes[5]);
+                byte[]? bssidBytes = conn.wlanAssociationAttributes.dot11Bssid;
+                if (bssidBytes != null && bssidBytes.Length >= 6)
+                {
+                    wifiInfo.Bssid = string.Format("{0:X2}:{1:X2}:{2:X2}:{3:X2}:{4:X2}:{5:X2}",
+                        bssidBytes[0], bssidBytes[1], bssidBytes[2], bssidBytes[3], bssidBytes[4], bssidBytes[5]);
+                }
 
                 // 3. 電波強度 (Signal Quality & dBm)
                 wifiInfo.SignalQuality = (int)conn.wlanAssociationAttributes.wlanSignalQuality;
@@ -155,9 +166,10 @@ namespace WiFiChecker.Services
 
         private static void EnrichBssListInfo(IntPtr clientHandle, Guid guid, WifiInfo wifiInfo, DOT11_SSID ssid)
         {
+            IntPtr ssidPtr = IntPtr.Zero;
             try
             {
-                IntPtr ssidPtr = Marshal.AllocHGlobal(Marshal.SizeOf<DOT11_SSID>());
+                ssidPtr = Marshal.AllocHGlobal(Marshal.SizeOf<DOT11_SSID>());
                 Marshal.StructureToPtr(ssid, ssidPtr, false);
 
                 uint result = WlanGetNetworkBssList(
@@ -170,6 +182,7 @@ namespace WiFiChecker.Services
                     out IntPtr bssListPtr);
 
                 Marshal.FreeHGlobal(ssidPtr);
+                ssidPtr = IntPtr.Zero;
 
                 if (result != 0 || bssListPtr == IntPtr.Zero)
                 {
@@ -192,31 +205,42 @@ namespace WiFiChecker.Services
                         int offset = Marshal.OffsetOf<WLAN_BSS_LIST>("wlanBssEntries").ToInt32();
                         int entrySize = Marshal.SizeOf<WLAN_BSS_ENTRY>();
 
-                        for (int i = 0; i < bssList.dwNumberOfItems; i++)
+                        // dwNumberOfItems が異常値でないこと、dwTotalSize を超えないことをチェック
+                        uint maxItems = Math.Min(bssList.dwNumberOfItems, 256);
+                        for (int i = 0; i < maxItems; i++)
                         {
-                            IntPtr entryPtr = new IntPtr(bssListPtr.ToInt64() + offset + (i * entrySize));
+                            long itemOffset = offset + (i * entrySize);
+                            if (itemOffset + entrySize > bssList.dwTotalSize)
+                            {
+                                break;
+                            }
+
+                            IntPtr entryPtr = new IntPtr(bssListPtr.ToInt64() + itemOffset);
                             var entry = Marshal.PtrToStructure<WLAN_BSS_ENTRY>(entryPtr);
 
-                            string bssid = string.Format("{0:X2}:{1:X2}:{2:X2}:{3:X2}:{4:X2}:{5:X2}",
-                                entry.dot11Bssid[0], entry.dot11Bssid[1], entry.dot11Bssid[2],
-                                entry.dot11Bssid[3], entry.dot11Bssid[4], entry.dot11Bssid[5]);
-
-                            if (string.Equals(bssid, wifiInfo.Bssid, StringComparison.OrdinalIgnoreCase))
+                            if (entry.dot11Bssid != null && entry.dot11Bssid.Length >= 6)
                             {
-                                // RSSI (dBm)
-                                if (entry.lRssi < 0)
-                                {
-                                    wifiInfo.SignalDbm = (int)entry.lRssi;
-                                }
+                                string bssid = string.Format("{0:X2}:{1:X2}:{2:X2}:{3:X2}:{4:X2}:{5:X2}",
+                                    entry.dot11Bssid[0], entry.dot11Bssid[1], entry.dot11Bssid[2],
+                                    entry.dot11Bssid[3], entry.dot11Bssid[4], entry.dot11Bssid[5]);
 
-                                // 周波数 (kHz -> GHz / チャンネル)
-                                if (entry.ulChCenterFrequency > 0)
+                                if (string.Equals(bssid, wifiInfo.Bssid, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    double freqMhz = entry.ulChCenterFrequency / 1000.0;
-                                    wifiInfo.FrequencyGhz = freqMhz / 1000.0;
-                                    (wifiInfo.Band, wifiInfo.Channel) = CalculateBandAndChannel(freqMhz);
+                                    // RSSI (dBm)
+                                    if (entry.lRssi < 0)
+                                    {
+                                        wifiInfo.SignalDbm = (int)entry.lRssi;
+                                    }
+
+                                    // 周波数 (kHz -> GHz / チャンネル)
+                                    if (entry.ulChCenterFrequency > 0)
+                                    {
+                                        double freqMhz = entry.ulChCenterFrequency / 1000.0;
+                                        wifiInfo.FrequencyGhz = freqMhz / 1000.0;
+                                        (wifiInfo.Band, wifiInfo.Channel) = CalculateBandAndChannel(freqMhz);
+                                    }
+                                    break;
                                 }
-                                break;
                             }
                         }
                     }
@@ -229,6 +253,13 @@ namespace WiFiChecker.Services
             catch (Exception ex)
             {
                 Debug.WriteLine($"EnrichBssListInfo エラー: {ex.Message}");
+            }
+            finally
+            {
+                if (ssidPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(ssidPtr);
+                }
             }
         }
 

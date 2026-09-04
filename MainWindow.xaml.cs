@@ -15,6 +15,7 @@ namespace WiFiChecker
 
         private readonly WifiService _wifiService = new WifiService();
         private readonly DispatcherTimer _timer = new DispatcherTimer();
+        private readonly System.Threading.SemaphoreSlim _refreshLock = new System.Threading.SemaphoreSlim(1, 1);
         private WifiInfo? _currentInfo;
 
         public MainWindow()
@@ -64,6 +65,7 @@ namespace WiFiChecker
 
         private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
+            _timer.Stop();
             SaveWindowPosition();
         }
 
@@ -103,12 +105,29 @@ namespace WiFiChecker
 
         private async Task RefreshWifiInfoAsync()
         {
-            var info = await _wifiService.GetCurrentWifiInfoAsync();
-            _currentInfo = info;
-            UpdateUi(info);
+            // 前回の更新処理がまだ実行中の場合は多重実行を防ぐためにスキップ
+            if (!await _refreshLock.WaitAsync(0))
+            {
+                return;
+            }
 
-            // 更新時に各情報をCSV形式でロギング
-            await CsvLoggerService.LogWifiInfoAsync(info);
+            try
+            {
+                var info = await _wifiService.GetCurrentWifiInfoAsync();
+                _currentInfo = info;
+                UpdateUi(info);
+
+                // 更新時に各情報をCSV形式でロギング
+                await CsvLoggerService.LogWifiInfoAsync(info);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Wi-Fi情報更新エラー: {ex.Message}");
+            }
+            finally
+            {
+                _refreshLock.Release();
+            }
         }
 
         private void UpdateUi(WifiInfo info)
