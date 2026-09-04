@@ -94,6 +94,16 @@ namespace WiFiChecker
             int interval = App.Settings.AutoRefreshIntervalSeconds;
             if (interval < 1) interval = 5;
 
+            // 保存されている設定値に合わせてコンボボックスを選択
+            foreach (ComboBoxItem item in IntervalCombo.Items)
+            {
+                if (int.TryParse(item.Tag?.ToString(), out int sec) && sec == interval)
+                {
+                    IntervalCombo.SelectedItem = item;
+                    break;
+                }
+            }
+
             _timer.Interval = TimeSpan.FromSeconds(interval);
             _timer.Tick += (s, e) => _ = RefreshWifiInfoAsync();
 
@@ -201,6 +211,16 @@ namespace WiFiChecker
             LabelCsvLoggingText.Text = Loc.LabelCsvLoggingSetting;
             BtnOpenLogFolderText.Text = Loc.BtnOpenLogFolder;
             BtnCloseText.Text = Loc.BtnClose;
+
+            // 自動更新間隔コンボボックスの単位テキストを更新
+            string secUnit = Loc.UnitSeconds;
+            foreach (ComboBoxItem item in IntervalCombo.Items)
+            {
+                if (int.TryParse(item.Tag?.ToString(), out int sec))
+                {
+                    item.Content = $"{sec} {secUnit}";
+                }
+            }
 
             this.Title = Loc.AppTitle;
 

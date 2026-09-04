@@ -25,6 +25,29 @@ namespace WiFiChecker.Services
         private static readonly string CsvHeader =
             "Timestamp,IsConnected,SSID,BSSID,SignalQuality(%),Signal(dBm),PHY,Band,Channel,Frequency(GHz),Authentication,Cipher,RxSpeed(Mbps),TxSpeed(Mbps),IPv4,SubnetMask,IPv6,Gateway,DNS,AdapterName,PcMacAddress";
 
+        private static string? _currentLogFileName;
+
+        /// <summary>
+        /// 現在のセッションのログファイル名（日付および時分秒）を取得
+        /// 例: wifi_log_2026-09-04_13-15-00.csv
+        /// </summary>
+        public static string GetCurrentLogFileName()
+        {
+            if (string.IsNullOrEmpty(_currentLogFileName))
+            {
+                _currentLogFileName = $"wifi_log_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.csv";
+            }
+            return _currentLogFileName;
+        }
+
+        public static void ResetLogSession()
+        {
+            lock (_lock)
+            {
+                _currentLogFileName = null;
+            }
+        }
+
         public static async Task LogWifiInfoAsync(WifiInfo info)
         {
             await Task.Run(() => LogWifiInfo(info));
@@ -43,7 +66,7 @@ namespace WiFiChecker.Services
                         Directory.CreateDirectory(LogDirectory);
                     }
 
-                    string fileName = $"wifi_log_{DateTime.Now:yyyy-MM-dd}.csv";
+                    string fileName = GetCurrentLogFileName();
                     string filePath = Path.Combine(LogDirectory, fileName);
 
                     bool fileExists = File.Exists(filePath);
